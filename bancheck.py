@@ -2,11 +2,9 @@ import re
 import os
 from flask import Flask, render_template_string, request, jsonify
 from bs4 import BeautifulSoup
-import requests
+import cloudscraper
 import time
-import urllib3
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+import logging
 
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -15,26 +13,18 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # ============================================================
-# STATS.CC SCRAPER
+# STATS.CC SCRAPER WITH CLOUDSCRAPER
 # ============================================================
 
 class StatsCCScraper:
     def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update({
+        self.scraper = cloudscraper.create_scraper()
+        self.scraper.headers.update({
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
             "Accept-Encoding": "gzip, deflate, br",
             "Accept-Language": "en-US,en;q=0.9",
             "Cache-Control": "no-cache",
             "Pragma": "no-cache",
-            "Sec-Ch-Ua": "\"Google Chrome\";v=\"120\", \"Chromium\";v=\"120\", \"Not_A Brand\";v=\"99\"",
-            "Sec-Ch-Ua-Mobile": "?0",
-            "Sec-Ch-Ua-Platform": "\"Windows\"",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1",
-            "Upgrade-Insecure-Requests": "1",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         })
 
@@ -46,15 +36,15 @@ class StatsCCScraper:
             # Add retry logic with exponential backoff
             for attempt in range(3):
                 try:
-                    response = self.session.get(
+                    response = self.scraper.get(
                         url, 
                         timeout=15,
-                        verify=False,
                         allow_redirects=True
                     )
                     print(f"[+] HTTP Status: {response.status_code} (Attempt {attempt + 1})")
                     
                     if response.status_code == 200:
+                        print(f"[+] Successfully fetched page (cloudscraper bypassed Cloudflare)")
                         return response.text
                     elif response.status_code == 429:
                         # Rate limited, wait and retry
@@ -66,15 +56,12 @@ class StatsCCScraper:
                         print(f"[-] Unexpected status: {response.status_code}")
                         return None
                         
-                except requests.exceptions.Timeout:
-                    print(f"[-] Timeout on attempt {attempt + 1}")
+                except Exception as e:
+                    print(f"[-] Error on attempt {attempt + 1}: {e}")
                     if attempt < 2:
-                        time.sleep(2 ** attempt)
-                    continue
-                except requests.exceptions.RequestException as e:
-                    print(f"[-] Request error: {e}")
-                    if attempt < 2:
-                        time.sleep(2 ** attempt)
+                        wait_time = 2 ** attempt
+                        print(f"[+] Retrying in {wait_time} seconds...")
+                        time.sleep(wait_time)
                     continue
             
             return None
@@ -152,6 +139,7 @@ class StatsCCScraper:
             }
         except Exception as e:
             print(f"[-] Parsing error: {e}")
+            logger.error(f"Parsing error: {e}")
             return {
                 "level": None,
                 "last_seen": None,
@@ -715,7 +703,7 @@ if __name__ == "__main__":
     print("=" * 65)
     print()
     print(f"Server running at: http://localhost:{port}")
-    print(f"[+] Using standard requests with Chrome headers")
+    print(f"[+] Using cloudscraper to bypass Cloudflare")
     print()
     print("API Endpoint: POST /api/check")
     print('  Body: {"username": "player_name", "profile_id": "profile_id_here"}')
