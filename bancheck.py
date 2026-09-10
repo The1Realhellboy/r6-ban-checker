@@ -2,6 +2,7 @@ import re
 import os
 from flask import Flask, render_template_string, request, jsonify
 from bs4 import BeautifulSoup
+from curl_cffi import requests as curl_requests
 import urllib3
 import logging
 
@@ -13,15 +14,7 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Try curl_cffi first, fallback to requests if it fails
-try:
-    from curl_cffi import requests as curl_requests
-    USE_CURL_CFFI = True
-    logger.info("[+] Using curl_cffi for requests")
-except ImportError:
-    logger.warning("[-] curl_cffi not available, using standard requests")
-    import requests as curl_requests
-    USE_CURL_CFFI = False
+logger.info("[+] Using curl_cffi for all requests")
 
 # ============================================================
 # STATS.CC SCRAPER
@@ -29,15 +22,11 @@ except ImportError:
 
 class StatsCCScraper:
     def __init__(self):
-        if USE_CURL_CFFI:
-            self.session = curl_requests.Session(impersonate="chrome")
-        else:
-            self.session = curl_requests.Session()
-        
+        self.session = curl_requests.Session(impersonate="chrome")
         self.session.headers.update({
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         })
 
     def get_player_page(self, username, profile_id):
@@ -45,12 +34,13 @@ class StatsCCScraper:
         print(f"[+] Stats URL: {url}")
         
         try:
-            response = self.session.get(url, timeout=30, verify=False)
+            response = self.session.get(url, timeout=30)
             print(f"[+] stats.cc HTTP: {response.status_code}")
             
             if response.status_code != 200:
                 print(f"[-] HTTP Status: {response.status_code}")
                 return None
+            
             return response.text
         except Exception as exc:
             print(f"[-] stats.cc error: {exc}")
@@ -678,7 +668,7 @@ if __name__ == "__main__":
     print("=" * 65)
     print()
     print(f"Server running at: http://localhost:{port}")
-    print(f"Using curl_cffi: {USE_CURL_CFFI}")
+    print(f"[+] Using curl_cffi for HTTP requests")
     print()
     print("API Endpoint: POST /api/check")
     print('  Body: {"username": "player_name", "profile_id": "profile_id_here"}')
