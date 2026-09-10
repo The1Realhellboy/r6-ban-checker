@@ -2,19 +2,17 @@ import re
 import os
 from flask import Flask, render_template_string, request, jsonify
 from bs4 import BeautifulSoup
-from curl_cffi import requests as curl_requests
+import requests
+import time
 import urllib3
-import logging
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Set up logging
+import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-
-logger.info("[+] Using curl_cffi for all requests")
 
 # ============================================================
 # STATS.CC SCRAPER
@@ -22,26 +20,65 @@ logger.info("[+] Using curl_cffi for all requests")
 
 class StatsCCScraper:
     def __init__(self):
-        self.session = curl_requests.Session(impersonate="chrome")
+        self.session = requests.Session()
         self.session.headers.update({
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "Accept-Encoding": "gzip, deflate, br",
             "Accept-Language": "en-US,en;q=0.9",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+            "Sec-Ch-Ua": "\"Google Chrome\";v=\"120\", \"Chromium\";v=\"120\", \"Not_A Brand\";v=\"99\"",
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": "\"Windows\"",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         })
 
     def get_player_page(self, username, profile_id):
         url = f"https://stats.cc/siege/{username}/{profile_id}"
-        print(f"[+] Stats URL: {url}")
+        print(f"[+] Fetching: {url}")
         
         try:
-            response = self.session.get(url, timeout=30)
-            print(f"[+] stats.cc HTTP: {response.status_code}")
+            # Add retry logic with exponential backoff
+            for attempt in range(3):
+                try:
+                    response = self.session.get(
+                        url, 
+                        timeout=15,
+                        verify=False,
+                        allow_redirects=True
+                    )
+                    print(f"[+] HTTP Status: {response.status_code} (Attempt {attempt + 1})")
+                    
+                    if response.status_code == 200:
+                        return response.text
+                    elif response.status_code == 429:
+                        # Rate limited, wait and retry
+                        wait_time = 2 ** attempt
+                        print(f"[-] Rate limited. Waiting {wait_time} seconds...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"[-] Unexpected status: {response.status_code}")
+                        return None
+                        
+                except requests.exceptions.Timeout:
+                    print(f"[-] Timeout on attempt {attempt + 1}")
+                    if attempt < 2:
+                        time.sleep(2 ** attempt)
+                    continue
+                except requests.exceptions.RequestException as e:
+                    print(f"[-] Request error: {e}")
+                    if attempt < 2:
+                        time.sleep(2 ** attempt)
+                    continue
             
-            if response.status_code != 200:
-                print(f"[-] HTTP Status: {response.status_code}")
-                return None
+            return None
             
-            return response.text
         except Exception as exc:
             print(f"[-] stats.cc error: {exc}")
             logger.error(f"Scraper error: {exc}")
@@ -56,17 +93,19 @@ class StatsCCScraper:
             if value.isdigit():
                 return int(value)
         
-        # Fallback
+        # Fallback - look for any span with level-like content
         for element in soup.select("span.bg-base-200"):
             value = element.get_text(strip=True)
             if value.isdigit():
                 number = int(value)
                 if 1 <= number <= 9999:
                     return number
+        
         return None
 
     @staticmethod
     def extract_last_played(soup):
+        # Look for Last Played label
         label = soup.find(id="Last Played")
         if not label:
             return None
@@ -82,11 +121,11 @@ class StatsCCScraper:
             if text:
                 return text
         
-        # Fallback
+        # Fallback - get next span
         spans = parent.find_all("span")
         for span in spans:
             text = span.get_text(" ", strip=True)
-            if text:
+            if text and text.lower() != "last played":
                 return text
         
         return None
@@ -101,15 +140,23 @@ class StatsCCScraper:
                 "status": "REQUEST_FAILED"
             }
         
-        soup = BeautifulSoup(html, "html.parser")
-        level = self.extract_level(soup)
-        last_seen = self.extract_last_played(soup)
-        
-        return {
-            "level": level,
-            "last_seen": last_seen,
-            "status": "OK"
-        }
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            level = self.extract_level(soup)
+            last_seen = self.extract_last_played(soup)
+            
+            return {
+                "level": level,
+                "last_seen": last_seen,
+                "status": "OK"
+            }
+        except Exception as e:
+            print(f"[-] Parsing error: {e}")
+            return {
+                "level": None,
+                "last_seen": None,
+                "status": "PARSE_FAILED"
+            }
 
 # ============================================================
 # R6 BAN CHECKER - NO LOGIN REQUIRED
@@ -668,7 +715,7 @@ if __name__ == "__main__":
     print("=" * 65)
     print()
     print(f"Server running at: http://localhost:{port}")
-    print(f"[+] Using curl_cffi for HTTP requests")
+    print(f"[+] Using standard requests with Chrome headers")
     print()
     print("API Endpoint: POST /api/check")
     print('  Body: {"username": "player_name", "profile_id": "profile_id_here"}')
