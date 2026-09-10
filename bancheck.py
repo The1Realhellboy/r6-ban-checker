@@ -1,5 +1,6 @@
 import re
 import requests
+import os
 from flask import Flask, render_template_string, request, jsonify
 from bs4 import BeautifulSoup
 from curl_cffi import requests as curl_requests
@@ -649,17 +650,19 @@ def check_account():
 # ============================================================
 
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    
     print("=" * 65)
     print("       🎮 R6 Siege Ban Checker Web Server")
     print("=" * 65)
     print()
-    print("Server running at: http://localhost:5000")
+    print(f"Server running at: http://localhost:{port}")
     print()
-    print("API Endpoint: POST http://localhost:5000/api/check")
+    print("API Endpoint: POST /api/check")
     print('  Body: {"username": "player_name", "profile_id": "profile_id_here"}')
     print()
     print("Status results: VALID or BANNED only")
     print("=" * 65)
     print()
     
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=port, debug=False)
