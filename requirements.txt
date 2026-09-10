@@ -1,0 +1,6 @@
+Flask==2.3.3
+requests==2.31.0
+beautifulsoup4==4.12.2
+curl-cffi==0.5.9
+urllib3==2.0.5
+gunicorn==21.2.0
